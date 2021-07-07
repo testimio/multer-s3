@@ -11,6 +11,8 @@ function staticValue(value) {
   }
 }
 
+const PART_SIZE = 1024 * 1024 * 20;
+
 var defaultAcl = staticValue('private')
 var defaultContentType = staticValue('application/octet-stream')
 
@@ -212,6 +214,8 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
       var upload = new Upload({
         client: this.s3,
         params: params,
+        queueSize: 8,
+        partSize: PART_SIZE, 
       })
 
       upload.on('httpUploadProgress', function (progress) {
