@@ -4,6 +4,7 @@ var fileType = require('file-type')
 var isSvg = require('is-svg')
 var parallel = require('run-parallel')
 var Upload = require('@aws-sdk/lib-storage').Upload;
+var PutObjectCommand = require('@aws-sdk/client-s3').PutObjectCommand;
 
 function staticValue(value) {
   return function (req, file, cb) {
@@ -150,6 +151,12 @@ function S3Storage(opts) {
     default: throw new TypeError('Expected opts.contentEncoding to be undefined, string or function')
   }
 
+  switch (typeof opts.executePutIfPossible) {
+    case 'boolean': this.executePutIfPossible = opts.executePutIfPossible; break
+    case 'undefined': this.executePutIfPossible = false; break
+    default: throw new TypeError('Expected opts.executePutIfPossible to be undefined, boolean')
+  }
+
   switch (typeof opts.tagging) {
     case 'function': this.getTagging = opts.tagging; break
     case 'string': this.getTagging = staticValue(opts.tagging); break
@@ -211,24 +218,50 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
     }
 
     try {
-      var upload = new Upload({
-        client: this.s3,
-        params: params,
-        queueSize: 8,
-        partSize: PART_SIZE, 
-      })
-
-      upload.on('httpUploadProgress', function (progress) {
-        if (progress.total) {
-          currentSize = progress.total;
+      var executeUpload;
+      var executePut = this.executePutIfPossible && req.complete && req.headers['content-length'];
+      var s3 = this.s3;
+      // request has already given us all of the data.
+      if (executePut && Number(req.headers['content-length']) <= PART_SIZE) {
+        executeUpload = function () {
+          var readBufferPromise = new Promise(function (res, rej) {
+            var buffers = []
+            params.Body.on('error', function (err) { rej(err) })
+            params.Body.on('data', function (buffer) {
+              buffers.push(buffer)
+            })
+            params.Body.on('end', function () {
+              res(Buffer.concat(buffers))
+            })
+          })
+          return readBufferPromise.then(function (bodyBuffer) {
+            currentSize = bodyBuffer.byteLength
+            var cloneParams = Object.assign({}, params, { Body: bodyBuffer })
+            var putCommand = new PutObjectCommand(cloneParams)
+            return s3.send(putCommand)
+          })
         }
-      });
+      } else {
+        var upload = new Upload({
+          client: s3,
+          params: params,
+          queueSize: 8,
+          partSize: PART_SIZE,
+        })
+
+        upload.on('httpUploadProgress', function (progress) {
+          if (progress.total) {
+            currentSize = progress.total;
+          }
+        })
+        executeUpload = function () { return upload.done() }
+      }
     } catch (e) {
       cb(e);
       return;
     }
-    
-    upload.done().then(function (result) {
+
+    executeUpload().then(function (result) {
       cb(null, {
         size: currentSize,
         bucket: opts.bucket,
@@ -243,7 +276,8 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
         metadata: opts.metadata,
         location: result.Location,
         etag: result.ETag,
-        versionId: result.VersionId
+        versionId: result.VersionId,
+        executedPut: executePut
       })
     }, cb);
 

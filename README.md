@@ -202,6 +202,10 @@ var upload = multer({
 })
 ```
 
+## Setting executePutIfPossible
+
+The optional `executePutIfPossible` option can be used use the `putObjectCommand` API instead of the upload API, when a request has already completed and its content-length was recieved, and the content length is smaller than the default part size of the uploader.
+
 ## Testing
 
 The tests mock all access to S3 and can be run completely offline.
