@@ -231,7 +231,11 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
               buffers.push(buffer)
             })
             params.Body.on('end', function () {
-              res(Buffer.concat(buffers))
+              if (buffers.length === 1) {
+                res(buffers[0])
+              } else {
+                res(Buffer.concat(buffers))
+              }
             })
           })
           return readBufferPromise.then(function (bodyBuffer) {
