@@ -13,6 +13,7 @@ function staticValue(value) {
 }
 
 const PART_SIZE = 1024 * 1024 * 20;
+const PUT_TIMEOUT = 2 * 60 * 1000;
 
 var defaultAcl = staticValue('private')
 var defaultContentType = staticValue('application/octet-stream')
@@ -219,22 +220,40 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
 
     try {
       var executeUpload;
-      var executePut = this.executePutIfPossible && req.complete && req.headers['content-length'];
+      var executePut = this.executePutIfPossible && req.headers['content-length'];
       var s3 = this.s3;
       // request has already given us all of the data.
       if (executePut && Number(req.headers['content-length']) <= PART_SIZE) {
         executeUpload = function () {
           var readBufferPromise = new Promise(function (res, rej) {
+            if (Buffer.isBuffer(params.Body) || typeof params.Body === 'string') {
+              return res(params.Body)
+            }
+            var cancelled = false
+            var timeout = setTimeout(() => {
+              cancelled = true
+              rej(new Error('timeout while reading the stream'))
+            }, PUT_TIMEOUT)
             var buffers = []
-            params.Body.on('error', function (err) { rej(err) })
+            params.Body.on('error', function (err) {
+              if (!cancelled) {
+                clearTimeout(timeout)
+                rej(err)
+              }
+            })
             params.Body.on('data', function (buffer) {
-              buffers.push(buffer)
+              if (!cancelled) {
+                buffers.push(buffer)
+              }
             })
             params.Body.on('end', function () {
-              if (buffers.length === 1) {
-                res(buffers[0])
-              } else {
-                res(Buffer.concat(buffers))
+              if (!cancelled) {
+                clearTimeout(timeout)
+                if (buffers.length === 1) {
+                  res(buffers[0])
+                } else {
+                  res(Buffer.concat(buffers))
+                }
               }
             })
           })
