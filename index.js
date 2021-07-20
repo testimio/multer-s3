@@ -239,6 +239,7 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
               if (!cancelled) {
                 clearTimeout(timeout)
                 rej(err)
+                cancelled = true
               }
             })
             params.Body.on('data', function (buffer) {
