@@ -12,7 +12,6 @@ function staticValue(value) {
   }
 }
 
-const PART_SIZE = 1024 * 1024 * 20;
 const PUT_TIMEOUT = 2 * 60 * 1000;
 
 var defaultAcl = staticValue('private')
@@ -230,9 +229,14 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
               return res(params.Body)
             }
             var cancelled = false
-            var timeout = setTimeout(() => {
-              cancelled = true
-              rej(new Error('timeout while reading the stream'))
+            var timeout = setTimeout(function () {
+              if (!cancelled) {
+                cancelled = true
+                rej(new Error('timeout while reading the stream'))
+                params.Body.removeAllListeners('data')
+                params.Body.removeAllListeners('end')
+                params.Body.resume()
+              }
             }, PUT_TIMEOUT)
             var buffers = []
             params.Body.on('error', function (err) {
@@ -240,6 +244,9 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
                 clearTimeout(timeout)
                 rej(err)
                 cancelled = true
+                params.Body.removeAllListeners('data')
+                params.Body.removeAllListeners('end')
+                params.Body.resume()
               }
             })
             params.Body.on('data', function (buffer) {
@@ -269,8 +276,7 @@ S3Storage.prototype._handleFile = function (req, file, cb) {
         var upload = new Upload({
           client: s3,
           params: params,
-          queueSize: 8,
-          partSize: PART_SIZE,
+          queueSize: 3,
         })
 
         upload.on('httpUploadProgress', function (progress) {
